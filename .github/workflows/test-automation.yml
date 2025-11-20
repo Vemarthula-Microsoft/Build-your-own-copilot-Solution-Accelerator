@@ -3,7 +3,7 @@ name: Test Automation DocGen
 on:
     workflow_call:
         inputs:
-          DOCGEN_URL:
+          CA_WEB_URL:
             required: true
             type: string
             description: "Web URL for DocGen"
@@ -20,7 +20,7 @@ on:
             value: ${{ jobs.test.outputs.TEST_REPORT_URL }}
 
 env:
-    url: ${{ inputs.DOCGEN_URL }}
+    url: ${{ inputs.CA_WEB_URL }}
     accelerator_name: "DocGen"
 
 jobs:
