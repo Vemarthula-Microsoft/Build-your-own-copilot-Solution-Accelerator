@@ -545,12 +545,12 @@ jobs:
           
           echo "Running post-deployment script..."
           
-          # Get the service principal object ID (not client ID) for Cosmos DB role assignment
-          echo "Getting service principal object ID for Cosmos DB access..."
+          # Get the service principal object ID (not client ID) for role assignments
+          echo "Getting service principal object ID..."
           SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
           echo "Service Principal Object ID: $SP_OBJECT_ID"
           
-          # Create a patched version of add_cosmosdb_access.sh that uses the SP object ID
+          # ===== Patch 1: add_cosmosdb_access.sh =====
           # This avoids the /me query that fails for service principals
           echo '#!/bin/bash' > ./infra/scripts/add_cosmosdb_access.sh
           echo 'resource_group="$1"' >> ./infra/scripts/add_cosmosdb_access.sh
@@ -571,6 +571,22 @@ jobs:
           echo '  fi' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'fi' >> ./infra/scripts/add_cosmosdb_access.sh
           chmod +x ./infra/scripts/add_cosmosdb_access.sh
+          
+          # ===== Patch 2: copy_kb_files.sh =====
+          # Replace the /me query section with service principal logic
+          cp ./infra/scripts/copy_kb_files.sh ./infra/scripts/copy_kb_files.sh.bak
+          sed -i '28,38d' ./infra/scripts/copy_kb_files.sh
+          sed -i '27a\
+          echo "Using service principal object ID for Storage Blob Data Contributor role"\
+          signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/copy_kb_files.sh
+          
+          # ===== Patch 3: create_sql_user_and_role.sh =====
+          # Replace the /me query section with service principal logic
+          cp ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh.bak
+          sed -i '34,45d' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
+          sed -i '33a\
+          echo "Using service principal object ID for SQL operations"\
+          signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
           
           # Now run the main script - it will use azd env values
           bash ./infra/scripts/process_sample_data.sh
