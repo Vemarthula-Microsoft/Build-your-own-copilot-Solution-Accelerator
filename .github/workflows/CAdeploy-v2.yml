@@ -1,4 +1,4 @@
-name: Validate Deployment - Client Advisor (v2)
+name: Deploy-Test-Cleanup (v2)
 
 on:
   pull_request:
@@ -39,38 +39,38 @@ on:
         required: false
         default: false
         type: boolean
-      cleanup_resources:
-        description: 'Cleanup resources after deployment and testing'
+      EXP:
+        description: 'Enable EXP'
         required: false
-        default: true
-        type: boolean
-      run_e2e_tests:
-        description: 'Run E2E tests after deployment'
-        required: false
-        default: true
+        default: false
         type: boolean
       build_docker_image:
-        description: 'Build new Docker image (if false, uses existing image based on branch)'
+        description: 'Build And Push Docker Image (Optional)'
         required: false
         default: false
         type: boolean
-      existing_webapp_url:
-        description: 'Existing WebApp URL to test (skips deployment if provided)'
+      run_e2e_tests:
+        description: 'Run End-to-End Tests'
         required: false
-        default: ''
-        type: string
-      EXP:
-        description: 'Enable EXP (Existing Project) mode to reuse Log Analytics and AI Project'
+        default: true
+        type: boolean
+      cleanup_resources:
+        description: 'Cleanup Deployed Resources'
         required: false
-        default: false
+        default: true
         type: boolean
       AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID:
-        description: 'Log Analytics Workspace ID (Optional - for EXP mode)'
+        description: 'Log Analytics Workspace ID (Optional)'
         required: false
         default: ''
         type: string
       AZURE_EXISTING_AI_PROJECT_RESOURCE_ID:
-        description: 'AI Project Resource ID (Optional - for EXP mode)'
+        description: 'AI Project Resource ID (Optional)'
+        required: false
+        default: ''
+        type: string
+      existing_webapp_url:
+        description: 'Existing WebApp URL (Skips Deployment)'
         required: false
         default: ''
         type: string
