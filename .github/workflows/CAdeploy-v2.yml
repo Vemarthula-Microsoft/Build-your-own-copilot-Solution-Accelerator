@@ -540,15 +540,18 @@ jobs:
         id: post_deploy
         env: 
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          managedIdentityClientId: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -e
           
           echo "Running post-deployment script..."
           echo "Note: Script will use azd environment values that were set during deployment"
+          echo "Using service principal authentication (managedIdentityClientId set)"
           
           # The process_sample_data.sh script expects to use azd env values (no parameters)
           # or be called with just the resource group name to use deployment outputs
           # Since we're using azd for deployment, it will automatically get values from azd env
+          # Setting managedIdentityClientId env var tells the script to skip interactive login
           bash ./infra/scripts/process_sample_data.sh
 
       - name: Logout from Azure
