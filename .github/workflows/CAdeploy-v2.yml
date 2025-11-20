@@ -535,35 +535,46 @@ jobs:
           WEBAPP_URL=$(echo "$DEPLOY_OUTPUT" | jq -r '.WEB_APP_URL // .SERVICE_BACKEND_ENDPOINT_URL // empty')
           echo "WEBAPP_URL=$WEBAPP_URL" >> $GITHUB_OUTPUT
           sleep 30
-      
+
       - name: Run Post-Deployment Script
         id: post_deploy
         env: 
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           set -e
-          
-          echo "Running post-deployment script..."
-          
-          # Get the service principal object ID (not client ID) for role assignments
-          echo "Getting service principal object ID..."
-          SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "::group::Azure CLI authentication"
+          echo "Checking Azure CLI authentication..."
+          # Try silent login, fallback to SP login if not authenticated
+          if ! az account show >/dev/null 2>&1; then
+            echo "Not logged in, performing az login..."
+            az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID"
+          else
+            echo "Already authenticated to Azure CLI."
+          fi
+          az account show
+          echo "::endgroup::"
+
+          echo "::group::Get Service Principal Object ID"
+          SP_OBJECT_ID=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv) || { echo "❌ Failed to get SP object ID. Check authentication and that the SP exists."; exit 1; }
           echo "Service Principal Object ID: $SP_OBJECT_ID"
-          
-          # ===== Patch 1: add_cosmosdb_access.sh =====
-          # This avoids the /me query that fails for service principals
+          echo "::endgroup::"
+
+          # Patch: add_cosmosdb_access.sh
           echo '#!/bin/bash' > ./infra/scripts/add_cosmosdb_access.sh
           echo 'resource_group="$1"' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'account_name="$2"' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'echo "Using service principal object ID: '"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'signed_user_id="'"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'echo "Checking if service principal has the Cosmos DB Built-in Data Contributor role"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'roleExists=$(az cosmosdb sql role assignment list --resource-group $resource_group --account-name $account_name --query "[?roleDefinitionId.ends_with(@, '"'"'00000000-0000-0000-0000-000000000002'"'"') && principalId == '"'"'$signed_user_id'"'"']" -o tsv)' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'roleExists=$(az cosmosdb sql role assignment list --resource-group $resource_group --account-name $account_name --query "[?roleDefinitionId.ends_with(@, '\''00000000-0000-0000-0000-000000000002'\'') && principalId==\''$signed_user_id'\'']")' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'if [ -n "$roleExists" ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
           echo '  echo "Service principal already has the Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'else' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  echo "Service principal does not have the Cosmos DB Built-in Data Contributor role. Assigning the role."' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  MSYS_NO_PATHCONV=1 az cosmosdb sql role assignment create --resource-group $resource_group --account-name $account_name --role-definition-id 00000000-0000-0000-0000-000000000002 --principal-id $signed_user_id --scope "/" --output none' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  echo "Assigning Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  MSYS_NO_PATHCONV=1 az cosmosdb sql role assignment create --resource-group $resource_group --account-name $account_name --role-definition-id 00000000-0000-0000-0000-000000000002 --principal-id $signed_user_id' >> ./infra/scripts/add_cosmosdb_access.sh
           echo '  if [ $? -eq 0 ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
           echo '    echo "Cosmos DB Built-in Data Contributor role assigned successfully."' >> ./infra/scripts/add_cosmosdb_access.sh
           echo '  else' >> ./infra/scripts/add_cosmosdb_access.sh
@@ -571,26 +582,24 @@ jobs:
           echo '  fi' >> ./infra/scripts/add_cosmosdb_access.sh
           echo 'fi' >> ./infra/scripts/add_cosmosdb_access.sh
           chmod +x ./infra/scripts/add_cosmosdb_access.sh
-          
-          # ===== Patch 2: copy_kb_files.sh =====
-          # Replace the /me query section with service principal logic
+
+          # Patch: copy_kb_files.sh
           cp ./infra/scripts/copy_kb_files.sh ./infra/scripts/copy_kb_files.sh.bak
           sed -i '28,38d' ./infra/scripts/copy_kb_files.sh
           sed -i '27a\
           echo "Using service principal object ID for Storage Blob Data Contributor role"\
           signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/copy_kb_files.sh
-          
-          # ===== Patch 3: create_sql_user_and_role.sh =====
-          # Replace the /me query section with service principal logic
+
+          # Patch: create_sql_user_and_role.sh
           cp ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh.bak
           sed -i '34,45d' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
           sed -i '33a\
           echo "Using service principal object ID for SQL operations"\
           signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
-          
-          # Now run the main script - it will use azd env values
-          bash ./infra/scripts/process_sample_data.sh
 
+          echo "::group::Process Sample Data Script"
+          bash ./infra/scripts/process_sample_data.sh || { echo "❌ process_sample_data.sh failed! Check logs above."; exit 1; }
+          echo "::endgroup::"
       - name: Logout from Azure
         if: always()
         run: |
