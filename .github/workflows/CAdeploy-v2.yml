@@ -30,12 +30,12 @@ on:
           - 'uksouth'
           - 'eastus'
       resource_group_name:
-        description: 'Resource Group Name (Optional - will generate unique name if not provided)'
+        description: 'Resource Group Name (Optional)'
         required: false
         default: ''
         type: string
       waf_enabled:
-        description: 'Enable WAF (Well-Architected Framework) configuration'
+        description: 'Enable WAF'
         required: false
         default: false
         type: boolean
@@ -59,14 +59,30 @@ on:
         required: false
         default: ''
         type: string
+      EXP:
+        description: 'Enable EXP (Existing Project) mode to reuse Log Analytics and AI Project'
+        required: false
+        default: false
+        type: boolean
+      AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID:
+        description: 'Log Analytics Workspace ID (Optional - for EXP mode)'
+        required: false
+        default: ''
+        type: string
+      AZURE_EXISTING_AI_PROJECT_RESOURCE_ID:
+        description: 'AI Project Resource ID (Optional - for EXP mode)'
+        required: false
+        default: ''
+        type: string
 
 env:
   GPT_MIN_CAPACITY: 200
   TEXT_EMBEDDING_MIN_CAPACITY: 80
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-  # For automatic triggers (push, schedule): force Non-WAF
+  # For automatic triggers (push, schedule): force Non-WAF + Non-EXP
   # For manual dispatch: use input values or defaults
   WAF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.waf_enabled || false) || false }}
+  EXP: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.EXP || false) || false }}
   CLEANUP_RESOURCES: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.cleanup_resources || true) || true }}
   RUN_E2E_TESTS: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.run_e2e_tests || true) || true }}
   BUILD_DOCKER_IMAGE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build_docker_image || false) || false }}
@@ -177,6 +193,7 @@ jobs:
           echo ""
           echo "Configuration Settings:"
           echo "  • WAF Enabled: ${{ env.WAF_ENABLED }}"
+          echo "  • EXP Enabled: ${{ env.EXP }}"
           echo "  • Run E2E Tests: ${{ env.RUN_E2E_TESTS }}"
           echo "  • Cleanup Resources: ${{ env.CLEANUP_RESOURCES }}"
           echo "  • Build Docker Image: ${{ env.BUILD_DOCKER_IMAGE }}"
@@ -193,11 +210,34 @@ jobs:
           fi
           echo ""
           if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            echo "ℹ️  Automatic Trigger: Using Non-WAF configuration"
+            echo "ℹ️  Automatic Trigger: Using Non-WAF + Non-EXP configuration"
           else
             echo "ℹ️  Manual Trigger: Using user-specified configuration"
+            # Check if EXP was auto-enabled after user input validation
+            if [[ "${{ env.EXP }}" == "true" && "${{ github.event.inputs.EXP }}" != "true" ]]; then
+              echo "🔧 Note: EXP was automatically enabled due to provided parameter values"
+            fi
           fi
           echo "🚀 ==================================="
+
+      - name: Validate and Auto-Configure EXP
+        run: |
+          echo "🔍 Validating EXP configuration..."
+          
+          # Check if EXP values were provided but EXP is disabled
+          if [[ "${{ github.event.inputs.EXP }}" != "true" ]]; then
+            if [[ -n "${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}" ]] || [[ -n "${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}" ]]; then
+              echo "🔧 AUTO-ENABLING EXP: EXP parameter values were provided but EXP was not explicitly enabled."
+              echo ""
+              echo "You provided values for:"
+              [[ -n "${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}" ]] && echo "  - Azure Log Analytics Workspace ID: '${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}'"
+              [[ -n "${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}" ]] && echo "  - Azure AI Project Resource ID: '${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}'"
+              echo ""
+              echo "✅ Automatically enabling EXP to use these values."
+              echo "EXP=true" >> $GITHUB_ENV
+              echo "📌 EXP has been automatically enabled for this deployment."
+            fi
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -357,6 +397,37 @@ jobs:
           echo "Registry: ${{ secrets.ACR_LOGIN_SERVER }}"
           echo "Full Image: ${{ secrets.ACR_LOGIN_SERVER }}/webapp:${{ steps.determine_image_tag.outputs.IMAGE_TAG }}"
           echo "================================"
+
+      - name: Configure EXP Parameters
+        if: env.EXP == 'true'
+        run: |
+          echo "🔧 EXP MODE ENABLED - Configuring existing project parameters..."
+          
+          # Set EXP variables dynamically
+          if [[ -n "${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}" ]]; then
+            EXP_LOG_ANALYTICS_ID="${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}"
+          else
+            EXP_LOG_ANALYTICS_ID="${{ secrets.EXP_LOG_ANALYTICS_WORKSPACE_ID }}"
+          fi
+          
+          if [[ -n "${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}" ]]; then
+            EXP_AI_PROJECT_ID="${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}"
+          else
+            EXP_AI_PROJECT_ID="${{ secrets.EXP_AI_PROJECT_RESOURCE_ID }}"
+          fi
+          
+          echo "AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID: $EXP_LOG_ANALYTICS_ID"
+          echo "AZURE_EXISTING_AI_PROJECT_RESOURCE_ID: $EXP_AI_PROJECT_ID"
+          echo "AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID=$EXP_LOG_ANALYTICS_ID" >> $GITHUB_ENV
+          echo "AZURE_EXISTING_AI_PROJECT_RESOURCE_ID=$EXP_AI_PROJECT_ID" >> $GITHUB_ENV
+
+      - name: Skip EXP Parameters
+        if: env.EXP != 'true'
+        run: |
+          echo "❌ EXP DISABLED - Skipping EXP parameters"
+          if [[ -n "${{ github.event.inputs.AZURE_ENV_LOG_ANALYTICS_WORKSPACE_ID }}" ]] || [[ -n "${{ github.event.inputs.AZURE_EXISTING_AI_PROJECT_RESOURCE_ID }}" ]]; then
+            echo "⚠️  Warning: EXP parameter values provided but EXP is disabled. These values will be ignored."
+          fi
 
       - name: Deploy and extract values from deployment output
         id: get_output
@@ -524,13 +595,14 @@ jobs:
           echo "| **Solution Prefix** | \`${{ steps.generate_solution_prefix.outputs.SOLUTION_PREFIX }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Docker Image Tag** | \`${{ steps.determine_image_tag.outputs.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **WAF Enabled** | ${{ env.WAF_ENABLED == 'true' && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **EXP Enabled** | ${{ env.EXP == 'true' && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Trigger** | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Branch** | ${{ env.BRANCH_NAME }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ job.status }}" == "success" ]]; then
             echo "### ✅ Deployment Details" >> $GITHUB_STEP_SUMMARY
             echo "- **Web App URL**: [${{ steps.get_output.outputs.WEBAPP_URL }}](${{ steps.get_output.outputs.WEBAPP_URL }})" >> $GITHUB_STEP_SUMMARY
-            echo "- **Configuration**: ${{ env.WAF_ENABLED == 'true' && 'WAF' || 'Non-WAF' }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Configuration**: ${{ env.WAF_ENABLED == 'true' && 'WAF' || 'Non-WAF' }}+${{ env.EXP == 'true' && 'EXP' || 'Non-EXP' }}" >> $GITHUB_STEP_SUMMARY
             echo "- Successfully deployed to Azure with all resources configured" >> $GITHUB_STEP_SUMMARY
             echo "- Post-deployment scripts executed successfully" >> $GITHUB_STEP_SUMMARY
           else
@@ -825,7 +897,7 @@ jobs:
           
           EMAIL_BODY=$(cat <<EOF
           {
-            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment process has encountered an issue and has failed to complete successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• WAF Enabled: ${{ env.WAF_ENABLED }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Please investigate the deployment failure at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>",
+            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment process has encountered an issue and has failed to complete successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• WAF Enabled: ${{ env.WAF_ENABLED }}<br>• EXP Enabled: ${{ env.EXP }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Please investigate the deployment failure at your earliest convenience.</p><p>Best regards,<br>Your Automation Team</p>",
             "subject": "CA Deployment - Failed"
           }
           EOF
@@ -846,7 +918,7 @@ jobs:
           if [ "${{ needs.e2e-test.result }}" = "skipped" ]; then
             EMAIL_BODY=$(cat <<EOF
           {
-            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment has completed successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• Web App URL: <a href='${WEBAPP_URL}'>${WEBAPP_URL}</a><br>• E2E Tests: Skipped (as configured)</p><p><strong>Configuration:</strong><br>• WAF Enabled: ${{ env.WAF_ENABLED }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
+            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment has completed successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• Web App URL: <a href='${WEBAPP_URL}'>${WEBAPP_URL}</a><br>• E2E Tests: Skipped (as configured)</p><p><strong>Configuration:</strong><br>• WAF Enabled: ${{ env.WAF_ENABLED }}<br>• EXP Enabled: ${{ env.EXP }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
             "subject": "CA Deployment - Success"
           }
           EOF
@@ -854,7 +926,7 @@ jobs:
           else
             EMAIL_BODY=$(cat <<EOF
           {
-            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment and testing process has completed successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• Web App URL: <a href='${WEBAPP_URL}'>${WEBAPP_URL}</a><br>• E2E Tests: Passed</p><p><strong>Configuration:</strong><br>• WAF Enabled: ${{ env.WAF_ENABLED }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
+            "body": "<p>Dear Team,</p><p>We would like to inform you that the Client Advisor deployment and testing process has completed successfully.</p><p><strong>Deployment Details:</strong><br>• Resource Group: ${RESOURCE_GROUP}<br>• Web App URL: <a href='${WEBAPP_URL}'>${WEBAPP_URL}</a><br>• E2E Tests: Passed</p><p><strong>Configuration:</strong><br>• WAF Enabled: ${{ env.WAF_ENABLED }}<br>• EXP Enabled: ${{ env.EXP }}</p><p><strong>Run URL:</strong> <a href='${RUN_URL}'>${RUN_URL}</a></p><p>Best regards,<br>Your Automation Team</p>",
             "subject": "CA Deployment - Test Automation - Success"
           }
           EOF
