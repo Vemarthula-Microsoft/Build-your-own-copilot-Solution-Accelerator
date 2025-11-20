@@ -1,16 +1,13 @@
 name: Deploy-Test-Cleanup-new
 on:
-  pull_request:
-    branches:
-      - main
-  workflow_run:
-    workflows: ["Build Docker and Optional Push"]
-    types:
-      - completed
+  push:
     branches:
       - main
       - dev
       - demo
+  schedule:
+    - cron: "0 6,18 * * *" # Runs at 6:00 AM and 6:00 PM GMT
+
   workflow_dispatch:
     inputs:
       azure_location:
@@ -618,9 +615,9 @@ jobs:
   e2e-test:
     if: always() && ((needs.deploy.result == 'success' && needs.deploy.outputs.WEBAPP_URL != '') || (github.event.inputs.existing_webapp_url != '' && github.event.inputs.existing_webapp_url != null)) && (github.event_name != 'workflow_dispatch' || github.event.inputs.run_e2e_tests == 'true' || github.event.inputs.run_e2e_tests == null)
     needs: [docker-build, deploy]
-    uses: ./.github/workflows/test-automation.yml
+    uses: ./.github/workflows/test_automation.yml
     with:
-      DOCGEN_URL: ${{ github.event.inputs.existing_webapp_url || needs.deploy.outputs.WEBAPP_URL }}
+      CA_WEB_URL: ${{ github.event.inputs.existing_webapp_url || needs.deploy.outputs.WEBAPP_URL }}
     secrets: inherit
 
   cleanup-deployment:
