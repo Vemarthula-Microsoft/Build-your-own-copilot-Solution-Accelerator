@@ -540,18 +540,39 @@ jobs:
         id: post_deploy
         env: 
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          managedIdentityClientId: ${{ secrets.AZURE_CLIENT_ID }}
         run: |
           set -e
           
           echo "Running post-deployment script..."
-          echo "Note: Script will use azd environment values that were set during deployment"
-          echo "Using service principal authentication (managedIdentityClientId set)"
           
-          # The process_sample_data.sh script expects to use azd env values (no parameters)
-          # or be called with just the resource group name to use deployment outputs
-          # Since we're using azd for deployment, it will automatically get values from azd env
-          # Setting managedIdentityClientId env var tells the script to skip interactive login
+          # Get the service principal object ID (not client ID) for Cosmos DB role assignment
+          echo "Getting service principal object ID for Cosmos DB access..."
+          SP_OBJECT_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "Service Principal Object ID: $SP_OBJECT_ID"
+          
+          # Create a patched version of add_cosmosdb_access.sh that uses the SP object ID
+          # This avoids the /me query that fails for service principals
+          echo '#!/bin/bash' > ./infra/scripts/add_cosmosdb_access.sh
+          echo 'resource_group="$1"' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'account_name="$2"' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'echo "Using service principal object ID: '"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'signed_user_id="'"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'echo "Checking if service principal has the Cosmos DB Built-in Data Contributor role"' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'roleExists=$(az cosmosdb sql role assignment list --resource-group $resource_group --account-name $account_name --query "[?roleDefinitionId.ends_with(@, '"'"'00000000-0000-0000-0000-000000000002'"'"') && principalId == '"'"'$signed_user_id'"'"']" -o tsv)' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'if [ -n "$roleExists" ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  echo "Service principal already has the Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'else' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  echo "Service principal does not have the Cosmos DB Built-in Data Contributor role. Assigning the role."' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  MSYS_NO_PATHCONV=1 az cosmosdb sql role assignment create --resource-group $resource_group --account-name $account_name --role-definition-id 00000000-0000-0000-0000-000000000002 --principal-id $signed_user_id --scope "/" --output none' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  if [ $? -eq 0 ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '    echo "Cosmos DB Built-in Data Contributor role assigned successfully."' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  else' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '    echo "Failed to assign Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo '  fi' >> ./infra/scripts/add_cosmosdb_access.sh
+          echo 'fi' >> ./infra/scripts/add_cosmosdb_access.sh
+          chmod +x ./infra/scripts/add_cosmosdb_access.sh
+          
+          # Now run the main script - it will use azd env values
           bash ./infra/scripts/process_sample_data.sh
 
       - name: Logout from Azure
