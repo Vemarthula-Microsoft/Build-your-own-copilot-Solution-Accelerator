@@ -597,6 +597,14 @@ jobs:
           echo "Using service principal object ID for SQL operations"\
           signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
 
+          # Patch: run_create_index_scripts.sh
+          cp ./infra/scripts/run_create_index_scripts.sh ./infra/scripts/run_create_index_scripts.sh.bak
+          sed -i '30,44d' ./infra/scripts/run_create_index_scripts.sh
+          sed -i '29a\
+          echo "Using service principal object ID for role assignments"\
+          signed_user_id="'"$SP_OBJECT_ID"'"\
+          signed_user_display_name="GitHub-Actions-SP"' ./infra/scripts/run_create_index_scripts.sh
+
           echo "::group::Process Sample Data Script"
           bash ./infra/scripts/process_sample_data.sh || { echo "❌ process_sample_data.sh failed! Check logs above."; exit 1; }
           echo "::endgroup::"
