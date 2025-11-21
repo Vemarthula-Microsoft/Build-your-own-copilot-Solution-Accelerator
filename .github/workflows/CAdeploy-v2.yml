@@ -597,12 +597,9 @@ jobs:
           echo "Using service principal object ID for SQL operations"\
           signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
 
-          # Patch: run_create_index_scripts.sh
-          cp ./infra/scripts/run_create_index_scripts.sh ./infra/scripts/run_create_index_scripts.sh.bak
-          # Use awk to replace lines 30-45 with SP object ID logic
-          awk 'NR < 30 {print} NR == 30 {print ""; print "# Use service principal object ID"; print "echo \"Using service principal object ID for role assignments\""; print "signed_user_id=\"'"$SP_OBJECT_ID"'\""; print "signed_user_display_name=\"GitHub-Actions-SP\""; print ""} NR > 45 {print}' ./infra/scripts/run_create_index_scripts.sh > ./infra/scripts/run_create_index_scripts.sh.tmp
-          mv ./infra/scripts/run_create_index_scripts.sh.tmp ./infra/scripts/run_create_index_scripts.sh
-          chmod +x ./infra/scripts/run_create_index_scripts.sh
+          # Export SP_OBJECT_ID so run_create_index_scripts.sh can use it
+          export SP_OBJECT_ID="$SP_OBJECT_ID"
+          echo "✅ Exported SP_OBJECT_ID: $SP_OBJECT_ID"
 
           echo "::group::Process Sample Data Script"
           bash ./infra/scripts/process_sample_data.sh || { echo "❌ process_sample_data.sh failed! Check logs above."; exit 1; }
