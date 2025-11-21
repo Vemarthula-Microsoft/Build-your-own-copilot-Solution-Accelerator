@@ -11,13 +11,6 @@ aif_resource_id="$7"
 
 echo "Script Started"
 
-# Debug: Check if SP_OBJECT_ID is set
-if [ -n "$SP_OBJECT_ID" ]; then
-    echo "DEBUG: SP_OBJECT_ID environment variable is set: $SP_OBJECT_ID"
-else
-    echo "DEBUG: SP_OBJECT_ID environment variable is NOT set"
-fi
-
 # Authenticate with Azure
 if az account show &> /dev/null; then
     echo "Already authenticated with Azure."
@@ -34,30 +27,21 @@ else
     fi
 fi
 
-# Use service principal object ID (set via environment variable SP_OBJECT_ID in CI/CD)
-# For local/interactive use, fall back to signed-in user
-if [ -n "$SP_OBJECT_ID" ]; then
-    echo "Using service principal object ID for role assignments"
-    signed_user_id="$SP_OBJECT_ID"
-    signed_user_display_name="GitHub-Actions-SP"
-else
-    echo "Getting signed in user id and display name"
-    
-    # Try to get signed-in user
-    if signed_user=$(az ad signed-in-user show --query "{id:id, displayName:displayName}" -o json 2>/dev/null); then
-        # Extract id and displayName using grep and sed
-        signed_user_id=$(echo "$signed_user" | grep -oP '"id":\s*"\K[^"]+')
-        signed_user_display_name=$(echo "$signed_user" | grep -oP '"displayName":\s*"\K[^"]+')
+# Get signed in user and store the output
+echo "Getting signed in user id and display name"
+signed_user=$(az ad signed-in-user show --query "{id:id, displayName:displayName}" -o json)
+
+# Extract id and displayName using grep and sed
+signed_user_id=$(echo "$signed_user" | grep -oP '"id":\s*"\K[^"]+')
+signed_user_display_name=$(echo "$signed_user" | grep -oP '"displayName":\s*"\K[^"]+')
+
+if [ $? -ne 0 ]; then
+    if [ -z "$managedIdentityClientId" ]; then
+        echo "Error: Failed to get signed in user id."
+        exit 1
     else
-        # Fallback to managed identity if available
-        if [ -n "$managedIdentityClientId" ]; then
-            echo "Using managed identity for authentication"
-            signed_user_id=$managedIdentityClientId
-            signed_user_display_name=$(az ad sp show --id "$signed_user_id" --query displayName -o tsv)
-        else
-            echo "Error: Failed to get signed in user id and no managed identity available."
-            exit 1
-        fi
+        signed_user_id=$managedIdentityClientId
+        signed_user_display_name=$(az ad sp show --id "$signed_user_id" --query displayName -o tsv)
     fi
 fi
 
