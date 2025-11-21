@@ -457,14 +457,13 @@ jobs:
 
           echo "Setting default subscription..."
           azd config set defaults.subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        
+          
           # Set additional parameters
           azd env set AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
           azd env set AZURE_ENV_OPENAI_LOCATION="$AZURE_ENV_OPENAI_LOCATION"
           azd env set AZURE_LOCATION="$AZURE_LOCATION"
           azd env set AZURE_RESOURCE_GROUP="$RESOURCE_GROUP_NAME"
           azd env set AZURE_ENV_IMAGETAG="${{ steps.determine_image_tag.outputs.IMAGE_TAG }}"
-          azd env set AZURE_DEV_COLLECT_TELEMETRY="no"
           
           # Set ACR name only when building Docker image
           if [[ "${{ env.BUILD_DOCKER_IMAGE }}" == "true" ]]; then
@@ -519,6 +518,10 @@ jobs:
           # Extract values from azd output (adjust these based on actual output variable names)
           export AI_FOUNDRY_RESOURCE_ID=$(echo "$DEPLOY_OUTPUT" | jq -r '.AI_FOUNDRY_RESOURCE_ID // empty')
           echo "AI_FOUNDRY_RESOURCE_ID=$AI_FOUNDRY_RESOURCE_ID" >> $GITHUB_ENV
+          export SQLDB_SERVER_NAME=$(echo "$DEPLOY_OUTPUT" | jq -r '.SQLDB_SERVER_NAME // empty')
+          echo "SQLDB_SERVER_NAME=$SQLDB_SERVER_NAME" >> $GITHUB_ENV
+          export SQLDB_DATABASE=$(echo "$DEPLOY_OUTPUT" | jq -r '.SQLDB_DATABASE // empty')
+          echo "SQLDB_DATABASE=$SQLDB_DATABASE" >> $GITHUB_ENV
           export AI_SEARCH_SERVICE_NAME=$(echo "$DEPLOY_OUTPUT" | jq -r '.AI_SEARCH_SERVICE_NAME // empty')
           echo "AI_SEARCH_SERVICE_NAME=$AI_SEARCH_SERVICE_NAME" >> $GITHUB_ENV
           export AZURE_COSMOSDB_ACCOUNT=$(echo "$DEPLOY_OUTPUT" | jq -r '.AZURE_COSMOSDB_ACCOUNT // empty')
@@ -535,37 +538,46 @@ jobs:
           WEBAPP_URL=$(echo "$DEPLOY_OUTPUT" | jq -r '.WEB_APP_URL // .SERVICE_BACKEND_ENDPOINT_URL // empty')
           echo "WEBAPP_URL=$WEBAPP_URL" >> $GITHUB_OUTPUT
           sleep 30
-
-      - name: Run Post-Deployment Script
-        id: post_deploy
-        env: 
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      
+      - name: Deploy Infra and Import Sample Data
         run: |
           set -e
-          echo "::group::Azure CLI authentication"
-          echo "Checking Azure CLI authentication..."
-          # Try silent login, fallback to SP login if not authenticated
-          if ! az account show >/dev/null 2>&1; then
-            echo "Not logged in, performing az login..."
-            az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID"
-          else
-            echo "Already authenticated to Azure CLI."
-          fi
-          az account show
-          echo "::endgroup::"
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
 
-          echo "::group::Process Sample Data Script"
-          bash ./infra/scripts/process_sample_data.sh || { echo "❌ process_sample_data.sh failed! Check logs above."; exit 1; }
-          echo "::endgroup::"
-      - name: Logout from Azure
-        if: always()
-        run: |
-          az logout
-          echo "Logged out from Azure."
+          echo "Running post-deployment script..."
 
+          bash ./infra/scripts/add_cosmosdb_access.sh \
+            "${{ env.RESOURCE_GROUP_NAME }}" \
+            "${{ env.AZURE_COSMOSDB_ACCOUNT }}" \
+            "${{ secrets.AZURE_CLIENT_ID }}"
+
+          bash ./infra/scripts/copy_kb_files.sh \
+            "${{ env.STORAGE_ACCOUNT_NAME }}" \
+            "${{ env.STORAGE_CONTAINER_NAME }}" \
+            "" \
+            "${{ secrets.AZURE_CLIENT_ID }}"
+
+          bash ./infra/scripts/run_create_index_scripts.sh \
+            "${{ env.KEY_VAULT_NAME }}" \
+            "" \
+            "${{ secrets.AZURE_CLIENT_ID }}" \
+            "${{ env.RESOURCE_GROUP_NAME }}" \
+            "${{ env.SQLDB_SERVER_NAME }}" \
+            "${{ env.AI_SEARCH_SERVICE_NAME }}" \
+            "${{ env.AI_FOUNDRY_RESOURCE_ID}}"
+
+
+          user_roles_json='[
+            {"clientId":"${{ env.CLIENT_ID }}","displayName":"${{ env.CLIENT_NAME }}","role":"db_datareader"},
+            {"clientId":"${{ env.CLIENT_ID }}","displayName":"${{ env.CLIENT_NAME }}","role":"db_owner"}
+          ]'
+
+          bash ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh \
+            "${{ env.SQLDB_SERVER_NAME }}.database.windows.net" \
+            "${{ env.SQLDB_DATABASE }}" \
+            "$user_roles_json" \
+            "${{ secrets.AZURE_CLIENT_ID }}"
+          echo "=== Post-Deployment Script Completed Successfully ==="
 
 
       - name: Generate Deploy Job Summary
