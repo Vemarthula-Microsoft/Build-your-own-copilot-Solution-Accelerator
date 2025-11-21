@@ -539,7 +539,7 @@ jobs:
           echo "WEBAPP_URL=$WEBAPP_URL" >> $GITHUB_OUTPUT
           sleep 30
 
-      - name: Install ODBC Driver 18 for SQL Server
+      - name: Install ODBC Driver 18 for SQL Servers
         run: |
           # Add Microsoft repository
           curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
