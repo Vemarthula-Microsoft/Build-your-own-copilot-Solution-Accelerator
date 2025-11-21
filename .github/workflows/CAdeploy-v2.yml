@@ -558,17 +558,21 @@ jobs:
           echo "✅ ODBC Driver 18 for SQL Server installed successfully"
       - name: Install sqlcmd for SQL Server
         run: |
-          # Download and install the Microsoft package repository
-          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          # Download and install the Microsoft package repository (reuse existing setup)
           UBUNTU_VERSION=$(lsb_release -rs)
-          curl https://packages.microsoft.com/config/ubuntu/${UBUNTU_VERSION}/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
-          sudo apt-get update
+          
           # Install sqlcmd
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
-          # Add sqlcmd to PATH for future steps
-          echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> $GITHUB_ENV
+          
+          # Add sqlcmd to PATH for this and future steps
+          echo "/opt/mssql-tools18/bin" >> $GITHUB_PATH
+          
+          # Also export for current shell
           export PATH="$PATH:/opt/mssql-tools18/bin"
-          sqlcmd -?
+          
+          # Verify installation
+          /opt/mssql-tools18/bin/sqlcmd -?
+          echo "✅ sqlcmd installed successfully"
       - name: Deploy Infra and Import Sample Data
         run: |
           set -e
