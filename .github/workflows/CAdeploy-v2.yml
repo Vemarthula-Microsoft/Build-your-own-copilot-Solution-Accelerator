@@ -557,50 +557,6 @@ jobs:
           az account show
           echo "::endgroup::"
 
-          echo "::group::Get Service Principal Object ID"
-          SP_OBJECT_ID=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv) || { echo "❌ Failed to get SP object ID. Check authentication and that the SP exists."; exit 1; }
-          echo "Service Principal Object ID: $SP_OBJECT_ID"
-          echo "::endgroup::"
-
-          # Patch: add_cosmosdb_access.sh
-          echo '#!/bin/bash' > ./infra/scripts/add_cosmosdb_access.sh
-          echo 'resource_group="$1"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'account_name="$2"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'echo "Using service principal object ID: '"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'signed_user_id="'"$SP_OBJECT_ID"'"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'echo "Checking if service principal has the Cosmos DB Built-in Data Contributor role"' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'roleExists=$(az cosmosdb sql role assignment list --resource-group "$resource_group" --account-name "$account_name" --query "[?contains(roleDefinitionId, '"'"'00000000-0000-0000-0000-000000000002'"'"') && principalId=='"'"'$signed_user_id'"'"']" -o tsv)' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'if [ -n "$roleExists" ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  echo "Service principal already has the Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'else' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  echo "Assigning Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  MSYS_NO_PATHCONV=1 az cosmosdb sql role assignment create --resource-group "$resource_group" --account-name "$account_name" --role-definition-id 00000000-0000-0000-0000-000000000002 --principal-id "$signed_user_id" --scope "/" --output none' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  if [ $? -eq 0 ]; then' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '    echo "Cosmos DB Built-in Data Contributor role assigned successfully."' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  else' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '    echo "Failed to assign Cosmos DB Built-in Data Contributor role."' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo '  fi' >> ./infra/scripts/add_cosmosdb_access.sh
-          echo 'fi' >> ./infra/scripts/add_cosmosdb_access.sh
-          chmod +x ./infra/scripts/add_cosmosdb_access.sh
-
-          # Patch: copy_kb_files.sh
-          cp ./infra/scripts/copy_kb_files.sh ./infra/scripts/copy_kb_files.sh.bak
-          sed -i '28,38d' ./infra/scripts/copy_kb_files.sh
-          sed -i '27a\
-          echo "Using service principal object ID for Storage Blob Data Contributor role"\
-          signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/copy_kb_files.sh
-
-          # Patch: create_sql_user_and_role.sh
-          cp ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh.bak
-          sed -i '34,45d' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
-          sed -i '33a\
-          echo "Using service principal object ID for SQL operations"\
-          signed_user_id="'"$SP_OBJECT_ID"'"' ./infra/scripts/add_user_scripts/create_sql_user_and_role.sh
-
-          # Export SP_OBJECT_ID so run_create_index_scripts.sh can use it
-          export SP_OBJECT_ID="$SP_OBJECT_ID"
-          echo "✅ Exported SP_OBJECT_ID: $SP_OBJECT_ID"
-
           echo "::group::Process Sample Data Script"
           bash ./infra/scripts/process_sample_data.sh || { echo "❌ process_sample_data.sh failed! Check logs above."; exit 1; }
           echo "::endgroup::"
