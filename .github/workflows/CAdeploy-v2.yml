@@ -541,11 +541,21 @@ jobs:
 
       - name: Install ODBC Driver 18 for SQL Server
         run: |
-          curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-          sudo add-apt-repository "$(curl https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list)"
+          # Add Microsoft repository
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          
+          # Get Ubuntu version
+          UBUNTU_VERSION=$(lsb_release -rs)
+          
+          # Add Microsoft SQL Server repository
+          curl https://packages.microsoft.com/config/ubuntu/${UBUNTU_VERSION}/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          
+          # Update package list and install ODBC driver
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
           sudo apt-get install -y unixodbc-dev
+          
+          echo "✅ ODBC Driver 18 for SQL Server installed successfully"
 
       - name: Deploy Infra and Import Sample Data
         run: |
