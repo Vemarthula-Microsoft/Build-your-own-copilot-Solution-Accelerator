@@ -599,8 +599,12 @@ jobs:
 
           # Patch: run_create_index_scripts.sh
           cp ./infra/scripts/run_create_index_scripts.sh ./infra/scripts/run_create_index_scripts.sh.bak
-          sed -i '30,44d' ./infra/scripts/run_create_index_scripts.sh
+          # Remove only the user query lines (30-41), keeping the fallback logic
+          sed -i '30,41d' ./infra/scripts/run_create_index_scripts.sh
+          # Insert SP object ID logic at line 29 (after authentication check)
           sed -i '29a\
+          \
+          # Get signed in user object ID - using service principal\
           echo "Using service principal object ID for role assignments"\
           signed_user_id="'"$SP_OBJECT_ID"'"\
           signed_user_display_name="GitHub-Actions-SP"' ./infra/scripts/run_create_index_scripts.sh
